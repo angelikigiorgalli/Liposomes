@@ -1,0 +1,318 @@
+
+
+library("FactoMineR")
+library("factoextra")
+library("Factoshiny")
+library("cowplot")
+library("ggpubr")
+library("ggplot2")
+library("scales")
+library("reshape2")
+library("dplyr")
+
+#set working directory to your current location of where you have stored your files
+library(readxl)
+df <- read_excel("C:/Users/afxen/Downloads/Dissertation/cleaned_MFA_df_final.xlsx", sheet = "in")
+
+#remove any row with Z_average_nm > 20000
+MFA_df <- MFA_df %>% filter(Z_average_nm <= 20000)
+
+
+# Cumulative Variance Plot (PCA) 
+pca_data <- MFA_df[, c("k", "a", "Z_average_nm", "drug_loading", "LogP", 
+                       "H.bond.donors", "H.bond.acceptors", "mw", "rotatable.bonds", 
+                       "charge.at.physiological.pH", "TPSA", "BertzCT", "Fsp3")]
+
+pca_result <- prcomp(pca_data, scale. = TRUE)
+
+var_explained <- (pca_result$sdev^2 / sum(pca_result$sdev^2)) * 100
+cum_var_explained <- cumsum(var_explained)
+pca_df <- data.frame(PC = 1:length(cum_var_explained), 
+                     CumulativeVariance = cum_var_explained)
+#Generate cumulative variance plot 
+cumulative_variance <- ggplot(pca_df, aes(x = PC, y = CumulativeVariance)) +
+  geom_line(color = "black", size = 1) + 
+  geom_point(color = "black", size = 2) + 
+  labs(
+    x = "Principal Component",
+    y = "Cumulative Variance (%)"
+  ) +
+  scale_y_continuous(labels = percent_format(scale = 1, accuracy = 1),  # No decimal places
+                     limits = c(35, 100), breaks = seq(40, 100, by = 10)) +  
+  scale_x_continuous(breaks = pca_df$PC) + 
+  
+  theme_classic(base_size = 16) + 
+  theme(
+    axis.text = element_text(size = 14, color = "black", family = "Helvetica"),
+    axis.title = element_text(size = 16, face = "bold", family = "Helvetica"),
+    axis.line = element_line(color = "black", size = 0.8),
+    axis.ticks = element_line(color = "black", size = 0.8),
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ) +
+  
+  # Grey dashed vertical line at Dimension 4
+  geom_vline(xintercept = 4, linetype = "dashed", color = "grey50", size = 0.5) +
+  
+  # Grey dashed horizontal line at cumulative variance of Dimension 4
+  geom_hline(yintercept = pca_df$CumulativeVariance[pca_df$PC == 4], linetype = "dashed", color = "grey50", size = 0.5) +
+  
+  # Annotation for cumulative variance at Dimension 4
+  annotate("text", x = 4.2,  # Slightly to the right of x = 4
+           y = pca_df$CumulativeVariance[pca_df$PC == 4] - 1, 
+           label = paste0(round(pca_df$CumulativeVariance[pca_df$PC == 4]), " %"),  # No decimals
+           color = "black", size = 3, hjust = 0, family = "Helvetica")  # Smaller text and right-aligned
+setwd("C:/Users/afxen/Downloads/Dissertation/plots")
+ggsave("plots/cumulative_variancee.tiff", width = 6, height = 4, dpi = 600)
+
+
+
+# New group definitions
+group_def <- c(2, 2, 9, 5)
+group_names <- c("Drug Release", "Formulation Properties", "API Descriptors", "Lipid Descriptors")
+
+# Updated variable group mapping
+variable_group <- rep(group_names, times = group_def)
+names(variable_group) <- colnames(pca_data)
+
+# Run MFA
+mfa_result <- MFA(pca_data, 
+                  group = group_def, 
+                  type = rep("s", 4),
+                  ncp = 10,
+                  name.group = group_names,
+                  graph = FALSE)
+
+
+
+#groups contribution plot
+
+group_colors <- c(
+  "API Descriptors" = "#F4A1A1",          # soft pink
+  "Drug Release" = "#3CA35C",             # green
+  "Formulation Properties" = "#96B4F2",   # soft blue
+  "Lipid Descriptors" = "#FFD700"         # yellow (gold)
+)
+
+group_contributions <- as.data.frame(mfa_result$group$contrib[, 1:4])
+colnames(group_contributions) <- paste0("Dimension ", 1:4)
+group_contributions$Group <- c("Drug Release", "Formulation Properties", "API Descriptors","Lipid Descriptors")
+
+library(reshape2)
+group_contributions_long <- melt(group_contributions, id.vars = "Group",
+                                 variable.name = "Dimension", value.name = "Contribution")
+
+#Clean group names and convert to factor with levels matching the color palette
+group_contributions_long$Group <- trimws(group_contributions_long$Group)
+group_contributions_long$Group <- factor(group_contributions_long$Group, levels = names(group_colors))
+plot_group_contribution_dim <- function(dim_name) {
+  df <- group_contributions_long %>% filter(Dimension == dim_name)
+  df$Group <- factor(df$Group, levels = df$Group[order(-df$Contribution)])
+  
+  ggplot(df, aes(x = Group, y = Contribution, fill = Group)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = group_colors, drop = FALSE) +
+    ylim(0, 100) +
+    ylab("Contribution (%)") +
+    xlab(NULL) +
+    theme_classic(base_size = 16) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title.y = element_text(size = 14, face = "bold"),
+      legend.position = "none",
+      plot.title = element_blank()
+    )
+}
+library(cowplot)
+
+p1 <- plot_group_contribution_dim("Dimension 1")
+p2 <- plot_group_contribution_dim("Dimension 2")
+p3 <- plot_group_contribution_dim("Dimension 3")
+p4 <- plot_group_contribution_dim("Dimension 4")
+
+final_plot <- plot_grid(p1, p2, p3, p4, labels = c("a", "b", "c", "d"), ncol = 2)
+
+ggsave("plots/2_group_contributions_dimensions_1_4.tiff", final_plot, width = 10, height = 8, dpi = 600)
+
+
+# Variable group mapping (from your dataset structure)
+group_var_map <- data.frame(
+  Variable = colnames(pca_data),
+  Group = rep(c("Drug Release", "Formulation Properties", "API Descriptors","Lipid Descriptors"), times = c(2, 2, 9,5))
+)
+
+# Color palette from your legend
+group_colors <- c(
+  "API Descriptors" = "#F4A1A1",          # soft pink
+  "Drug Release" = "#3CA35C",             # green
+  "Formulation Properties" = "#96B4F2",# soft blue
+  "Lipid Descriptors" = "#FFD700"         # yellow (gold)
+)
+
+# Function to plot top 10 contributing variables for each dimension
+plot_var_contrib <- function(mfa_result, dim_number, label_letter) {
+  contrib_data <- as.data.frame(mfa_result$quanti.var$contrib[, dim_number, drop = FALSE])
+  colnames(contrib_data) <- "Contribution"
+  contrib_data$Variable <- rownames(contrib_data)
+  
+  # Merge with group info, get top 10, and order factors
+  contrib_data <- contrib_data %>%
+    inner_join(group_var_map, by = "Variable") %>%
+    arrange(desc(Contribution)) %>%
+    slice(1:10)
+  
+  # Reorder for plotting from highest to lowest
+  contrib_data$Variable <- factor(contrib_data$Variable, levels = rev(contrib_data$Variable))
+  
+  # Plot
+  ggplot(contrib_data, aes(x = Variable, y = Contribution, fill = Group)) +
+    geom_bar(stat = "identity", color = "black", width = 0.6) +
+    scale_fill_manual(values = group_colors) +
+    labs(x = NULL, y = "Contribution (%)") +
+    nature_theme +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.title = element_blank()
+    ) +
+    ggtitle(paste0(label_letter, ")"), subtitle = paste("Dimension", dim_number))
+  
+}
+
+# Create plots for Dimensions 1–4
+var_dim1 <- plot_var_contrib(mfa_result, 1, "a")
+var_dim2 <- plot_var_contrib(mfa_result, 2, "b")
+var_dim3 <- plot_var_contrib(mfa_result, 3, "c")
+var_dim4 <- plot_var_contrib(mfa_result, 4, "d")
+
+# Combine into 2x2 figure and save
+var_contrib_combined <- plot_grid(var_dim1, var_dim2, var_dim3, var_dim4, 
+                                  ncol = 2, align = "hv")
+
+ggsave("plots/2_variable_contributions_4dims.tiff", var_contrib_combined, width = 12, height = 8, dpi = 600)
+
+# Variable group mapping (from your dataset structure)
+group_var_map <- data.frame(
+  Variable = colnames(pca_data),
+  Group = rep(c("Drug Release", "Formulation Properties", "API Descriptors","Lipid Descriptors"), times = c(2, 2, 9,5))
+)
+
+# Color palette from your legend
+group_colors <- c(
+  "API Descriptors" = "#F4A1A1",          # soft pink
+  "Drug Release" = "#3CA35C",             # green
+  "Formulation Properties" = "#96B4F2",   # soft blue
+  "Lipid Descriptors" = "#FFD700"         # yellow (gold)
+)
+
+
+# Function to plot top 10 contributing variables for each dimension
+plot_var_contrib <- function(mfa_result, dim_number, label_letter) {
+  contrib_data <- as.data.frame(mfa_result$quanti.var$contrib[, dim_number, drop = FALSE])
+  colnames(contrib_data) <- "Contribution"
+  contrib_data$Variable <- rownames(contrib_data)
+  
+  # Merge with group information
+  contrib_data <- contrib_data %>%
+    inner_join(group_var_map, by = "Variable") %>%
+    arrange(desc(Contribution)) %>%
+    slice(1:10)  # Top 10
+  
+  contrib_data$Variable <- factor(contrib_data$Variable, levels = rev(contrib_data$Variable))
+  
+  ggplot(contrib_data, aes(x = Variable, y = Contribution, fill = Group)) +
+    geom_bar(stat = "identity", color = "black", width = 0.6) +
+    scale_fill_manual(values = group_colors) +
+    labs(x = NULL, y = "Contribution (%)") +
+    nature_theme +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.title = element_blank()
+    ) +
+    ggtitle(paste0(label_letter, ") Dimension ", dim_number))
+}
+
+# Create plots for Dimensions 1–4
+var_dim1 <- plot_var_contrib(mfa_result, 1, "a")
+var_dim2 <- plot_var_contrib(mfa_result, 2, "b")
+var_dim3 <- plot_var_contrib(mfa_result, 3, "c")
+var_dim4 <- plot_var_contrib(mfa_result, 4, "d")
+
+# Combine and export
+var_contrib_combined <- plot_grid(var_dim1, var_dim2, var_dim3, var_dim4, 
+                                  ncol = 2, align = "hv")
+contrib_data$Variable <- factor(contrib_data$Variable, levels = rev(contrib_data$Variable))
+
+
+ggsave("plots/2_variable_contributions_4dims.tiff", var_contrib_combined, width = 12, height = 8, dpi = 600)
+
+
+
+group_colors <- c(
+  "API Descriptors" = "#F4A1A1",          # soft pink
+  "Drug Release" = "#3CA35C",             # green
+  "Formulation Properties" = "#96B4F2",   # soft blue
+  "Lipid Descriptors" = "#FFD700"       # yellow (gold)
+)
+
+# correlation cirle - top 8 contributing factors 
+quant <- fviz_mfa_var(mfa_result, choice = "quanti.var", repel = TRUE, 
+                      select.var = list(contrib = 8)) + nature_theme
+
+# HCPC Dendrogram
+res.hcpc <- HCPC (mfa_result, graph = FALSE, nb.clust =2)
+dend <- fviz_dend(res.hcpc, show_labels = FALSE) + nature_theme
+
+cluster_df <- res.hcpc$data.clust
+
+# Individuals Clustered by HCPC
+cluster_map <- fviz_cluster(res.hcpc, repel = TRUE, show.clust.cent = FALSE, 
+                            ggtheme = theme_classic(), geom = c("point"), 
+                            ellipse.type = FALSE, axes = c(1,2)) + 
+  nature_theme + theme(axis.title.y = element_blank())
+
+# Boxplot for Kinetic Parameter k
+k <- ggplot(cluster_df, aes(x = factor(clust), y = k, color = factor(clust))) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.6, size = 2) +
+  stat_summary(fun = mean, geom = "text", 
+               aes(label = round(..y.., 2)), hjust = -0.3, vjust = -1.2, 
+               size = 4, color = "black") +
+  labs(x = "Cluster", y = expression(k)) +
+  stat_compare_means(comparisons = list(c("1", "2")), 
+                     label = "p.signif", method = "wilcox.test") +
+  nature_theme + theme(legend.position = "none")
+
+# Boxplot for kinetic parameter a 
+a <- ggplot(cluster_df, aes(x = factor(clust), y = a, color = factor(clust))) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.6, size = 2) +
+  stat_summary(fun = mean, geom = "text", 
+               aes(label = round(..y.., 2)), hjust = -0.3, vjust = -1.2, 
+               size = 4, color = "black") +
+  labs(x = "Cluster", y = expression(a)) +
+  stat_compare_means(comparisons = list(c("1", "2")), 
+                     label = "p.signif", method = "wilcox.test") +
+  nature_theme + theme(legend.position = "none")
+
+# Combine Plots
+# Adjust spacing and alignment to prevent black patches
+combined_plot <- plot_grid(
+  plot_grid(quant, cluster_map, labels = c("a", "b"), ncol = 2, align = "hv"),
+  plot_grid(dend, k, a, labels = c("c", "d", "e"), ncol = 3, align = "hv"),
+  ncol = 1,
+  rel_heights = c(1.5, 1.0)  # Adjust row heights for better proportions
+) + theme(plot.background = element_rect(fill = "white", color = NA))
+
+
+
+
+ggsave("plots/2_mfa_HCPC_subplots.tiff", combined_plot, width = 16, height = 10, dpi = 600)
+
+
+quanti_desc <- res.hcpc$desc.var$quanti
+
+# Export each cluster's quantitative variable description as separate CSV files
+for (i in seq_along(quanti_desc)) {
+  write.csv(quanti_desc[[i]], paste0("cluster_", i, "_2_quanti_desc.csv"), row.names = TRUE)
+}
